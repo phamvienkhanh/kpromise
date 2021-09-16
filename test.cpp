@@ -2,8 +2,11 @@
 #include "include/promise.hpp"
 #include <iostream>
 
+kasync::PromiseReceiver receiver;
+kasync::PromiseExecutor executor(&receiver);
+
 auto asyncFunc() -> kasync::Promise {
-    return kasync::Promise([](kasync::Resolve& resolve, kasync::Reject& reject) {
+    return kasync::Promise(&executor, [](kasync::Resolve& resolve, kasync::Reject& reject) {
         std::cout << "===================\n";
         std::cout << "==== func async ====\n";
         std::cout << "= thread id: " << std::this_thread::get_id() << std::endl;
@@ -13,9 +16,6 @@ auto asyncFunc() -> kasync::Promise {
 }
 
 auto main() -> int {
-
-    kasync::PromiseExecutor::init();
-
     std::cout << "===================\n";
     std::cout << "==== main ====\n";
     std::cout << "= thread id: " << std::this_thread::get_id() << std::endl;
@@ -43,10 +43,10 @@ auto main() -> int {
     .launch();
 
     while(1) {
-        kasync::PromiseHandler::getIntance()->callNext();
+        receiver.step();
     }
 
-    kasync::PromiseExecutor::destroy();
+    executor.stopAll();
 
     return 0;
 }

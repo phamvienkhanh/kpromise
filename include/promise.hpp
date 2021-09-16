@@ -48,18 +48,10 @@ namespace kasync {
         Reject  reject;
     };
 
-    class PromiseHandler
+    class PromiseReceiver
     {
     public:
-        static PromiseHandler* getIntance() {
-            if(s_promiseHandler == nullptr) {
-                s_promiseHandler = new PromiseHandler();
-            }
-
-            return s_promiseHandler;
-        }
-
-        void callNext() {
+        void step() {
             std::unique_lock<std::mutex> lock(m_mutex);
             if(!m_queue.empty()) {
                 auto promiseData = m_queue.front();
@@ -80,52 +72,14 @@ namespace kasync {
         }
 
     private:
-        static PromiseHandler* s_promiseHandler;
         std::queue<PromiseData> m_queue;
         std::mutex m_mutex;
     };
-    PromiseHandler* PromiseHandler::s_promiseHandler = nullptr;
 
     class PromiseExecutor
     {
     public:
-        static void init() {
-            if(s_promiseExecutor == nullptr) {
-                s_promiseExecutor = new PromiseExecutor();
-            }
-        }
-
-        static PromiseExecutor* getIntance() {
-            if(s_promiseExecutor == nullptr) {
-                s_promiseExecutor = new PromiseExecutor();
-            }
-
-            return s_promiseExecutor;
-        }
-
-        static void destroy() {
-            if(s_promiseExecutor)
-                s_promiseExecutor->stopAll();
-        }
-
-        void pushJob(PromiseData job) {
-            std::unique_lock<std::mutex> lock(m_mutex);
-            m_queue.push(job);
-            lock.unlock();
-            m_conditionVar.notify_one();
-        }
-    private:
-
-        static PromiseExecutor* s_promiseExecutor;
-
-        int m_numWorkers = 2;
-        bool m_isStop = false;
-        std::mutex m_mutex;
-        std::condition_variable m_conditionVar;
-        std::vector<std::thread*> m_workers;
-        std::queue<PromiseData> m_queue;
-
-        PromiseExecutor() {
+        PromiseExecutor(PromiseReceiver* promiseReceiver): m_promiseReceiver(promiseReceiver) {
             for(int i = 0; i < m_numWorkers; i++)
             {
                 std::thread *_thread = new std::thread([&]() {
@@ -146,8 +100,9 @@ namespace kasync {
 
                             if (promiseData.asyncfunc != nullptr) {
                                 promiseData.asyncfunc(promiseData.resolve, promiseData.reject);
-                                PromiseHandler::getIntance()->pushData(promiseData);
-                                
+                                if(m_promiseReceiver) {
+                                    m_promiseReceiver->pushData(promiseData);
+                                }                              
                             }
                             
                             lock.lock();
@@ -158,6 +113,7 @@ namespace kasync {
                 _thread->detach();
             }
         };
+        ~PromiseExecutor(){};
 
         void stopAll() {
             m_isStop = true;
@@ -170,13 +126,49 @@ namespace kasync {
                     m_workers[i]->join();
             }
         };
+
+        // static void init() {
+        //     if(s_promiseExecutor == nullptr) {
+        //         s_promiseExecutor = new PromiseExecutor();
+        //     }
+        // }
+
+        // static PromiseExecutor* getIntance() {
+        //     if(s_promiseExecutor == nullptr) {
+        //         s_promiseExecutor = new PromiseExecutor();
+        //     }
+
+        //     return s_promiseExecutor;
+        // }
+
+        // static void destroy() {
+        //     if(s_promiseExecutor)
+        //         s_promiseExecutor->stopAll();
+        // }
+
+        void pushJob(PromiseData job) {
+            std::unique_lock<std::mutex> lock(m_mutex);
+            m_queue.push(job);
+            lock.unlock();
+            m_conditionVar.notify_one();
+        }
+
+    private:
+        int m_numWorkers = 2;
+        bool m_isStop = false;
+        std::mutex m_mutex;
+        std::condition_variable     m_conditionVar;
+        std::vector<std::thread*>   m_workers;
+        std::queue<PromiseData>     m_queue;
+        PromiseReceiver*            m_promiseReceiver;  
     };
-    PromiseExecutor* PromiseExecutor::s_promiseExecutor = nullptr;
-    
+
     class Promise
     {
     public:
-        Promise(std::function<void(Resolve&, Reject&)> asyncfunc) {
+        Promise(PromiseExecutor* promiseExecutor, std::function<void(Resolve&, Reject&)> asyncfunc)
+        : m_promiseExecutor(promiseExecutor)
+        {
             m_promiseData.asyncfunc = asyncfunc;
         }
 
@@ -186,11 +178,13 @@ namespace kasync {
         }
 
         void launch() {
-            PromiseExecutor::getIntance()->pushJob(m_promiseData);
+            if(m_promiseExecutor)
+                m_promiseExecutor->pushJob(m_promiseData);
         }
 
     private:
-        PromiseData m_promiseData;
+        PromiseData      m_promiseData;
+        PromiseExecutor* m_promiseExecutor;
     };
 }
 
