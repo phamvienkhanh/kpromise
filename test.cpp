@@ -2,16 +2,31 @@
 #include "include/promise.hpp"
 #include <iostream>
 
-kasync::PromiseReceiver receiver;
-kasync::PromiseExecutor executor(&receiver);
+void eventHandler(klib::KEvent event) {
+    if(event.eventType == klib::EventPromiseType) {
+        auto eData = std::any_cast<klib::PromiseData>(event.eventData);
+        std::any value = eData.resolve.value();
+            for(auto funcCallback : eData.listCallback) {
+                value = funcCallback(value);
+            }
+    }
+}
 
-auto asyncFunc() -> kasync::Promise {
-    return kasync::Promise(&executor, [](kasync::Resolve& resolve, kasync::Reject& reject) {
+klib::KEventLoop      eventLoop(eventHandler);
+klib::PromiseExecutor executor(&eventLoop);
+
+auto asyncFunc(uint32_t num) -> klib::Promise {
+    return klib::Promise(&executor, [=](klib::Resolve& resolve, klib::Reject& reject) {
         std::cout << "===================\n";
         std::cout << "==== func async ====\n";
         std::cout << "= thread id: " << std::this_thread::get_id() << std::endl;
+        std::cout << "= sum " << num << std::endl;
         std::cout << "===================";
-        resolve(123);
+        uint32_t sum = 0;
+        for(auto i = 0; i < num; i++) {
+            sum += i;
+        }
+        resolve(sum);
     });
 }
 
@@ -21,13 +36,13 @@ auto main() -> int {
     std::cout << "= thread id: " << std::this_thread::get_id() << std::endl;
     std::cout << "===================";
 
-    asyncFunc()
+    asyncFunc(1000000)
     .then([](std::any val) -> std::any {
-        auto data = val.has_value() ? std::any_cast<int>(val) : 0;
+        auto data = val.has_value() ? std::any_cast<uint32_t>(val) : 0;
         std::cout << "===================\n";
         std::cout << "==== then 1 ====\n";
         std::cout << "= thread id: " << std::this_thread::get_id() << std::endl;
-        std::cout << "= value: " << data << std::endl;
+        std::cout << "= value : " << data << std::endl;
         std::cout << "===================";
         return {};
     })
@@ -43,7 +58,7 @@ auto main() -> int {
     .launch();
 
     while(1) {
-        receiver.step();
+        eventLoop.step();
     }
 
     executor.stopAll();

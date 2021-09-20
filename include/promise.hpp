@@ -9,7 +9,11 @@
 #include <functional>
 #include <condition_variable>
 
-namespace kasync {
+#include "event_loop.hpp"
+
+namespace klib {
+
+    std::string EventPromiseType = "klib:EventPromise";
 
     class Resolve
     {
@@ -48,38 +52,12 @@ namespace kasync {
         Reject  reject;
     };
 
-    class PromiseReceiver
-    {
-    public:
-        void step() {
-            std::unique_lock<std::mutex> lock(m_mutex);
-            if(!m_queue.empty()) {
-                auto promiseData = m_queue.front();
-                m_queue.pop();
-                lock.unlock();
-                
-                std::any value = promiseData.resolve.value();
-                for(auto funcCallback : promiseData.listCallback) {
-                    value = funcCallback(value);
-                }
-
-            }
-        }
-
-        void pushData(PromiseData promiseData) {
-            std::unique_lock<std::mutex> lock(m_mutex);
-            m_queue.push(promiseData);
-        }
-
-    private:
-        std::queue<PromiseData> m_queue;
-        std::mutex m_mutex;
-    };
-
     class PromiseExecutor
     {
     public:
-        PromiseExecutor(PromiseReceiver* promiseReceiver): m_promiseReceiver(promiseReceiver) {
+        PromiseExecutor(KEventLoop* eventLoop)
+        : m_eventLoop(eventLoop) 
+        {
             for(int i = 0; i < m_numWorkers; i++)
             {
                 std::thread *_thread = new std::thread([&]() {
@@ -100,8 +78,11 @@ namespace kasync {
 
                             if (promiseData.asyncfunc != nullptr) {
                                 promiseData.asyncfunc(promiseData.resolve, promiseData.reject);
-                                if(m_promiseReceiver) {
-                                    m_promiseReceiver->pushData(promiseData);
+                                if(m_eventLoop) {
+                                    klib::KEvent eData;
+                                    eData.eventType = klib::EventPromiseType;
+                                    eData.eventData = promiseData;
+                                    m_eventLoop->pushEvent(eData);
                                 }                              
                             }
                             
@@ -127,25 +108,6 @@ namespace kasync {
             }
         };
 
-        // static void init() {
-        //     if(s_promiseExecutor == nullptr) {
-        //         s_promiseExecutor = new PromiseExecutor();
-        //     }
-        // }
-
-        // static PromiseExecutor* getIntance() {
-        //     if(s_promiseExecutor == nullptr) {
-        //         s_promiseExecutor = new PromiseExecutor();
-        //     }
-
-        //     return s_promiseExecutor;
-        // }
-
-        // static void destroy() {
-        //     if(s_promiseExecutor)
-        //         s_promiseExecutor->stopAll();
-        // }
-
         void pushJob(PromiseData job) {
             std::unique_lock<std::mutex> lock(m_mutex);
             m_queue.push(job);
@@ -160,7 +122,7 @@ namespace kasync {
         std::condition_variable     m_conditionVar;
         std::vector<std::thread*>   m_workers;
         std::queue<PromiseData>     m_queue;
-        PromiseReceiver*            m_promiseReceiver;  
+        klib::KEventLoop*           m_eventLoop;  
     };
 
     class Promise
